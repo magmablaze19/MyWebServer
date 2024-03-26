@@ -17,27 +17,48 @@ import java.util.ArrayList;
 
 public class MyWebServer {
     public static void main (String[] args) {
-        ArrayList<String> request = new ArrayList<String>();
-        ServerSocket svrSct;
+        //Initialize Essential Variables
+        ServerSocket svrSct = null;
         Socket sct;
-        InputStream input = null;
-        OutputStream output = null;
-        System.out.println("Goober");
         String port = args[0];
         String root_path = args[1];
         try{
-        svrSct = new ServerSocket(Integer.parseInt(port));
-        sct = svrSct.accept();
-        input = sct.getInputStream();
-        output = sct.getOutputStream();
+            //Init socket
+            svrSct = new ServerSocket(Integer.parseInt(port));
         }
         catch (Exception e){
             System.out.println(e);
         }
-        try {
-            BufferedReader reader = new BufferedReader(new InputStreamReader(input));
-            int i = 0;
-            while (i != -1) {
+        while(svrSct != null){
+            try {
+                //Constantly poll for requests on the socket, and process them when they arrive.
+                sct = svrSct.accept();
+                processRequest(sct, root_path);
+            }
+            catch (Exception e){
+                System.out.println(e);
+            }
+        }
+    }
+
+    public static void processRequest(Socket sct, String root_path){
+        //Init essenial vars
+        ArrayList<String> request = new ArrayList<String>();
+        InputStream input = null;
+        OutputStream output = null;
+        try{
+            //Create input and output streams
+            input = sct.getInputStream();
+            output = sct.getOutputStream();
+        }
+        catch (Exception e){
+            System.out.println(e);
+        }
+            try{
+                //Create and read data from buffered reader
+                BufferedReader reader = new BufferedReader(new InputStreamReader(input));
+                int i = 0;
+                while (i != -1) {
                 String temp = reader.readLine();
                 if (!temp.isEmpty()){
                     request.add(temp);
@@ -47,20 +68,18 @@ public class MyWebServer {
                     i = -1;
                 }
             }
+            //Print Incoming Request to Terminal
             System.out.println(request.toString());
-
             //Open File and confirm it exists
-            System.out.println("opening "+ root_path + getPath(request.get(0)));
             File file = OpenFile(root_path + getPath(request.get(0)));
             if (file == null){
-                System.out.println("File is Empty");
+                //If File is not found, return appropriate error and close streams.
                 String httprsp = "HTTP/1.1 404 File Not Found\r\n";
                 output.write(httprsp.getBytes(StandardCharsets.UTF_8)); 
                 output.flush();
+                output.close();
+                input.close();
                 return;
-            }
-            else{
-                System.out.println("File Retreval Succeded");
             }
             
             //Create Formatter to format attributes in HTTP date time format
@@ -72,15 +91,18 @@ public class MyWebServer {
             
             //Check for header, and if present check if file has been modified since.
             if (checkForIMSHeader(request,attributes.lastModifiedTime().toInstant().toEpochMilli())){
+                //If not modified, return expected error.
                 String httprsp = "HTTP/1.1 304 Not Modified\r\n";
                 output.write(httprsp.getBytes(StandardCharsets.UTF_8)); 
                 output.flush();
+                output.close();
+                input.close();
                 return;
             }
-
+            //Check for request type
             Integer responseType = checkForHeadorGet(request);
             if (responseType == 1){
-                //Send Response
+                //Send Header for POST request
                 String httprsp = "HTTP/1.1 200 OK\r\n"
                 + "Date: " + LocalDateTime.now().format(formatter) + "\n"
                 + "Server: Alex's Server\n"
@@ -89,9 +111,11 @@ public class MyWebServer {
                 + "\r\n";
                 output.write(httprsp.getBytes(StandardCharsets.UTF_8)); 
                 output.flush();
+                output.close();
+                input.close();
             }
             if (responseType == 2){
-                //Send Response and requested file
+                //Send Response and requested file for GET request
                 String httprsp = "HTTP/1.1 200 OK\r\n"
                 + "Date: " + LocalDateTime.now().format(formatter) + "\n"
                 + "Server: Alex's Server\n"
@@ -100,27 +124,35 @@ public class MyWebServer {
                 + "\r\n";
                 output.write(httprsp.getBytes(StandardCharsets.UTF_8)); 
 
-                Scanner scan = new Scanner(file);
-                String fileString = scan.useDelimiter("\\Z").next();
-                scan.close();
-                output.write(fileString.getBytes("UTF-8"));
+                byte[] fileBytes = new byte[(int) file.length()];
+                try (FileInputStream finputstream = new FileInputStream(file)) {
+                    finputstream.read(fileBytes);
+                  }
+                //fileString.getBytes("UTF-8")
+                output.write(fileBytes);
                 output.flush();
-
-
+                output.close();
+                input.close();
             }
             if (responseType == 0){
+                //Send error for unimplemented function.
                 String httprsp = "HTTP/1.1 501 Not Implemented\r\n";
                 output.write(httprsp.getBytes(StandardCharsets.UTF_8)); 
                 output.flush();
+                output.close();
+                input.close();
             }
 
 
         }
         catch (Exception e){
+            //Send error if program would have crashed due to bad formatted request.
             String httprsp = "HTTP/1.1 400 Bad Request\r\n";
             try {
             output.write(httprsp.getBytes(StandardCharsets.UTF_8)); 
             output.flush();
+            output.close();
+            input.close();
             }
             catch (Exception f){
                 System.out.println(f);
@@ -129,7 +161,9 @@ public class MyWebServer {
         }
     }
 
+
     public static File OpenFile(String path){
+        //Open the file at the requested path, return the file if it exists and don't if it doesnt
         File file = new File(path);
         if (file.getAbsoluteFile().exists()){
             return file;
@@ -140,14 +174,16 @@ public class MyWebServer {
     }
 
     public static String getPath(String string){
+        //Extract the filepath from the http request
         String[] result = string.split("\\s");
-        if (result[1].equals("/")){
-            return "/index.html";
+        if (result[1].equals("/") || result[1].charAt(result[1].length()-1) == '/'){
+            return result[1]+"index.html";
         }
         return result[1];
     }
 
     public static Boolean checkForIMSHeader(ArrayList<String> req, long lastModifiedTime){
+        //Check for the If-Modified-Since header, if present check if file has been modified since the given date
         for (int i = 0; i < req.size(); i++){
             String temp1 = req.get(i);
             String[] temp2 = temp1.split("\\s");
@@ -157,7 +193,6 @@ public class MyWebServer {
                 System.out.println(date);
                 ZonedDateTime zdt = ZonedDateTime.parse(date, formatter);
                 long reqtime = zdt.toInstant().toEpochMilli();
-                System.out.println("File LMT: "+Long.toString(lastModifiedTime) + "Request LMT: "+ Long.toString(reqtime));
                 if(lastModifiedTime>reqtime){
                     return false;
                 }
@@ -170,6 +205,7 @@ public class MyWebServer {
     } 
 
     public static Integer checkForHeadorGet(ArrayList<String> req){
+        //Check request for type of request, and return 1 for HEAD, 2 for GET, and 0 for neither.
         for (int i = 0; i < req.size(); i++){
             String temp1 = req.get(i);
             String[] temp2 = temp1.split("\\s");
