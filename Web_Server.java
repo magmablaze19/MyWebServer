@@ -1,3 +1,6 @@
+//Alexandre Passin
+//MyWebServer project for Network Systems and Design
+
 import java.io.*;
 import java.net.*;
 import java.nio.charset.StandardCharsets;
@@ -6,13 +9,16 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.attribute.BasicFileAttributeView;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.text.SimpleDateFormat;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Date;
 import java.util.Locale;
 import java.util.Scanner;
+import java.util.TimeZone;
 import java.util.ArrayList;
 
 public class MyWebServer {
@@ -74,7 +80,7 @@ public class MyWebServer {
             File file = OpenFile(root_path + getPath(request.get(0)));
             if (file == null){
                 //If File is not found, return appropriate error and close streams.
-                String httprsp = "HTTP/1.1 404 File Not Found\r\n";
+                String httprsp = "HTTP/1.1 404 File Not Found\r\n\r\n" + "<h1>Error 404: File Not Found</h1>";
                 output.write(httprsp.getBytes(StandardCharsets.UTF_8)); 
                 output.flush();
                 output.close();
@@ -83,7 +89,8 @@ public class MyWebServer {
             }
             
             //Create Formatter to format attributes in HTTP date time format
-            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("EEE MMM d hh:mm:ss zzz yyyy", Locale.ENGLISH).withZone(ZoneOffset.UTC);
+            SimpleDateFormat formatter = new SimpleDateFormat("EEE MMM dd hh:mm:ss zzz yyyy");
+            formatter.setTimeZone(TimeZone.getTimeZone("EST"));
 
             //Create Attributes Object to pull file attributes for response
             Path path = Paths.get(root_path + getPath(request.get(0))); 
@@ -92,7 +99,7 @@ public class MyWebServer {
             //Check for header, and if present check if file has been modified since.
             if (checkForIMSHeader(request,attributes.lastModifiedTime().toInstant().toEpochMilli())){
                 //If not modified, return expected error.
-                String httprsp = "HTTP/1.1 304 Not Modified\r\n";
+                String httprsp = "HTTP/1.1 304 Not Modified\r\n\r\n" + "<h1>Error 304: Not Modified</h1>";
                 output.write(httprsp.getBytes(StandardCharsets.UTF_8)); 
                 output.flush();
                 output.close();
@@ -101,12 +108,13 @@ public class MyWebServer {
             }
             //Check for request type
             Integer responseType = checkForHeadorGet(request);
+            Date currdate = Date.from(LocalDateTime.now().atZone(ZoneId.systemDefault()).toInstant());
             if (responseType == 1){
                 //Send Header for POST request
                 String httprsp = "HTTP/1.1 200 OK\r\n"
-                + "Date: " + LocalDateTime.now().format(formatter) + "\n"
+                + "Date: " + formatter.format(currdate) + "\n"
                 + "Server: Alex's Server\n"
-                + "Last-Modified: " + formatter.format(attributes.lastModifiedTime().toInstant()) + "\n"
+                + "Last-Modified: " + formatter.format(new Date(attributes.lastModifiedTime().toMillis())) + "\n"
                 + "Content-Length: " + Long.toString(attributes.size()) + "\n"
                 + "\r\n";
                 output.write(httprsp.getBytes(StandardCharsets.UTF_8)); 
@@ -117,26 +125,26 @@ public class MyWebServer {
             if (responseType == 2){
                 //Send Response and requested file for GET request
                 String httprsp = "HTTP/1.1 200 OK\r\n"
-                + "Date: " + LocalDateTime.now().format(formatter) + "\n"
+                + "Date: " + formatter.format(currdate) + "\n"
                 + "Server: Alex's Server\n"
-                + "Last-Modified: " + formatter.format(attributes.lastModifiedTime().toInstant()) + "\n"
+                + "Last-Modified: " + formatter.format(new Date(attributes.lastModifiedTime().toMillis())) + "\n"
                 + "Content-Length: " + Long.toString(attributes.size()) + "\n"
                 + "\r\n";
                 output.write(httprsp.getBytes(StandardCharsets.UTF_8)); 
-
+                //Convert file to byte data and stream to client
                 byte[] fileBytes = new byte[(int) file.length()];
                 try (FileInputStream finputstream = new FileInputStream(file)) {
                     finputstream.read(fileBytes);
                   }
-                //fileString.getBytes("UTF-8")
                 output.write(fileBytes);
                 output.flush();
                 output.close();
                 input.close();
             }
             if (responseType == 0){
-                //Send error for unimplemented function.
-                String httprsp = "HTTP/1.1 501 Not Implemented\r\n";
+                //Send error for unimplemented function. Ocasionally only the http is displayed in curl, unsure why.
+                //Code is identical to other error message sending code.
+                String httprsp = "HTTP/1.1 501 Not Implemented\r\n\r\n" + "<h1>Error 501: Not Implemented</h1>";
                 output.write(httprsp.getBytes(StandardCharsets.UTF_8)); 
                 output.flush();
                 output.close();
@@ -147,7 +155,7 @@ public class MyWebServer {
         }
         catch (Exception e){
             //Send error if program would have crashed due to bad formatted request.
-            String httprsp = "HTTP/1.1 400 Bad Request\r\n";
+            String httprsp = "HTTP/1.1 400 Bad Request\r\n\r\n" + "<h1>Error 400: Bad Request</h1>";
             try {
             output.write(httprsp.getBytes(StandardCharsets.UTF_8)); 
             output.flush();
@@ -188,10 +196,18 @@ public class MyWebServer {
             String temp1 = req.get(i);
             String[] temp2 = temp1.split("\\s");
             if (temp2[0].equals("If-Modified-Since:") || temp2[0].equals(" If-Modified-Since:")){
-                DateTimeFormatter formatter = DateTimeFormatter.ofPattern("EEE MMM d hh:mm:ss zzz yyyy", Locale.ENGLISH).withZone(ZoneOffset.UTC);
+                SimpleDateFormat formatter = new SimpleDateFormat("EEE MMM dd HH:mm:ss zzz yyyy");
+                formatter.setTimeZone(TimeZone.getTimeZone("EST"));
+                //Combine split string into date
                 String date = temp2[1] + " " + temp2[2] + " " + temp2[3] + " " + temp2[4] + " " + temp2[5] + " " + temp2[6];
                 System.out.println(date);
-                ZonedDateTime zdt = ZonedDateTime.parse(date, formatter);
+                Date zdt = null;
+                try {
+                    zdt = formatter.parse(date);
+                }
+                catch (Exception e){
+                    System.out.println("please");
+                }
                 long reqtime = zdt.toInstant().toEpochMilli();
                 if(lastModifiedTime>reqtime){
                     return false;
